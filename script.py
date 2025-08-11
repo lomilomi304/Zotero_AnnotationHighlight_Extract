@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 
 import requests
 import json
@@ -11,8 +10,8 @@ import os
 # =============================================================================
 
 # Get these from https://www.zotero.org/settings/keys
-ZOTERO_API_KEY = ""  # Your Zotero API key
-ZOTERO_USER_ID = ""  # Your Zotero User ID (numbers only)
+ZOTERO_API_KEY = "YOUR_API_KEY_HERE"  # Your Zotero API key
+ZOTERO_USER_ID = "YOUR_USER_ID_HERE"  # Your Zotero User ID (numbers only)
 
 # Optional: Specify a collection ID to limit search to specific folder
 # Leave as None to search entire library
@@ -26,9 +25,13 @@ COLOR_MAPPING = {
     "#2ea8e5": "Blue",
     "#a28ae5": "Purple",
     "#e56eee": "Magenta",
-    "#f19837": "Orange",
+    "#f19837": "Orange,
     "#aaaaaa": "Gray"
 }
+
+# =============================================================================
+# SCRIPT CODE
+# =============================================================================
 
 class ZoteroAnnotationHarvester:
     def __init__(self, api_key, user_id):
@@ -85,26 +88,37 @@ class ZoteroAnnotationHarvester:
             return {'title': 'Unknown Title', 'filename': 'Unknown File'}
     
     def process_annotations(self, annotations):
-        """Process and organize annotations by color"""
+        """Process and organize annotations by color and type"""
         print("Processing annotations...")
         
         processed_annotations = []
         
         for annotation in annotations:
             data = annotation.get('data', {})
+            annotation_type = data.get('annotationType', '')
             
-            # Skip non-highlight annotations
-            if data.get('annotationType') != 'highlight':
-                continue
+            # Process both highlights and text notes
+            if annotation_type == 'highlight':
+                text = data.get('annotationText', '').strip()
+                if not text:  # Skip empty highlights
+                    continue
+                    
+                color_code = data.get('annotationColor', '#ffd400')  # Default to yellow
+                color_name = COLOR_MAPPING.get(color_code, f"Unknown ({color_code})")
+                annotation_category = f"{color_name} Highlight"
                 
-            # Get annotation details
-            text = data.get('annotationText', '').strip()
-            if not text:  # Skip empty annotations
-                continue
+            elif annotation_type == 'note':
+                text = data.get('annotationComment', '').strip()
+                if not text:  # Skip empty notes
+                    continue
+                    
+                color_code = '#ffffff'  # White for notes
+                color_name = 'Note'
+                annotation_category = 'Text Note'
                 
-            color_code = data.get('annotationColor', '#ffd400')  # Default to yellow
-            color_name = COLOR_MAPPING.get(color_code, f"Unknown ({color_code})")
-            
+            else:
+                continue  # Skip other annotation types
+                
             parent_key = data.get('parentItem')
             page_label = data.get('annotationPageLabel', 'Unknown')
             
@@ -113,8 +127,10 @@ class ZoteroAnnotationHarvester:
             
             processed_annotation = {
                 'text': text,
+                'annotation_type': annotation_type,
                 'color_code': color_code,
                 'color_name': color_name,
+                'category': annotation_category,
                 'page': page_label,
                 'pdf_title': parent_info.get('title', 'Unknown'),
                 'pdf_filename': parent_info.get('filename', 'Unknown'),
@@ -127,7 +143,7 @@ class ZoteroAnnotationHarvester:
         return processed_annotations
     
     def save_to_files(self, annotations):
-        """Save annotations to separate files by color"""
+        """Save annotations to separate files by color and type"""
         if not annotations:
             print("No annotations to save!")
             return
@@ -136,29 +152,38 @@ class ZoteroAnnotationHarvester:
         output_dir = f"zotero_annotations_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         os.makedirs(output_dir, exist_ok=True)
         
-        # Group annotations by color
-        by_color = {}
+        # Group annotations by category (color for highlights, separate for notes)
+        by_category = {}
         for ann in annotations:
-            color = ann['color_name']
-            if color not in by_color:
-                by_color[color] = []
-            by_color[color].append(ann)
+            category = ann['category']
+            if category not in by_category:
+                by_category[category] = []
+            by_category[category].append(ann)
         
-        # Save each color to a separate file
-        for color, color_annotations in by_color.items():
-            filename = os.path.join(output_dir, f"{color.lower()}_highlights.txt")
+        # Save each category to a separate file
+        for category, category_annotations in by_category.items():
+            # Clean filename
+            safe_category = category.lower().replace(' ', '_').replace('/', '_')
+            filename = os.path.join(output_dir, f"{safe_category}.txt")
             
             with open(filename, 'w', encoding='utf-8') as f:
-                f.write(f"=== {color.upper()} HIGHLIGHTS ===\n")
-                f.write(f"Total: {len(color_annotations)} annotations\n")
+                f.write(f"=== {category.upper()} ===\n")
+                f.write(f"Total: {len(category_annotations)} annotations\n")
                 f.write("=" * 50 + "\n\n")
                 
-                for i, ann in enumerate(color_annotations, 1):
+                for i, ann in enumerate(category_annotations, 1):
                     f.write(f"{i}. {ann['pdf_title']}\n")
                     f.write(f"   File: {ann['pdf_filename']}\n")
                     f.write(f"   Page: {ann['page']}\n")
+                    f.write(f"   Type: {ann['annotation_type'].title()}\n")
                     f.write(f"   Date: {ann['date_modified']}\n")
-                    f.write(f"   Text: {ann['text']}\n")
+                    
+                    # Format text differently for notes vs highlights
+                    if ann['annotation_type'] == 'note':
+                        f.write(f"   Your Note: {ann['text']}\n")
+                    else:
+                        f.write(f"   Highlighted Text: {ann['text']}\n")
+                    
                     f.write("-" * 50 + "\n\n")
         
         # Save summary CSV
@@ -166,12 +191,28 @@ class ZoteroAnnotationHarvester:
         csv_filename = os.path.join(output_dir, "all_annotations.csv")
         df.to_csv(csv_filename, index=False, encoding='utf-8')
         
+        # Save separate files for highlights vs notes
+        highlights = [ann for ann in annotations if ann['annotation_type'] == 'highlight']
+        notes = [ann for ann in annotations if ann['annotation_type'] == 'note']
+        
+        if highlights:
+            highlights_df = pd.DataFrame(highlights)
+            highlights_csv = os.path.join(output_dir, "highlights_only.csv")
+            highlights_df.to_csv(highlights_csv, index=False, encoding='utf-8')
+            
+        if notes:
+            notes_df = pd.DataFrame(notes)
+            notes_csv = os.path.join(output_dir, "text_notes_only.csv")
+            notes_df.to_csv(notes_csv, index=False, encoding='utf-8')
+        
         # Print summary
         print(f"\nResults saved to: {output_dir}/")
         print(f"Total annotations processed: {len(annotations)}")
-        print("\nBreakdown by color:")
-        for color, color_annotations in by_color.items():
-            print(f"  {color}: {len(color_annotations)} annotations")
+        print(f"  Highlights: {len(highlights)}")
+        print(f"  Text Notes: {len(notes)}")
+        print("\nBreakdown by category:")
+        for category, category_annotations in by_category.items():
+            print(f"  {category}: {len(category_annotations)} annotations")
         
         return output_dir
 
@@ -199,7 +240,7 @@ def main():
     processed = harvester.process_annotations(annotations)
     
     if not processed:
-        print("No highlight annotations found in your library.")
+        print("No highlight or note annotations found in your library.")
         return
     
     # Save results
