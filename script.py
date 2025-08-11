@@ -25,7 +25,7 @@ COLOR_MAPPING = {
     "#2ea8e5": "Blue",
     "#a28ae5": "Purple",
     "#e56eee": "Magenta",
-    "#f19837": "Orange,
+    "#f19837": "Orange",
     "#aaaaaa": "Gray"
 }
 
